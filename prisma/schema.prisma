@@ -1,0 +1,260 @@
+// =========================================================================
+// SIKAMOS - STIP International Kadet Mobility System
+// Sekolah Tinggi Ilmu Pelayaran (STIP) INDONESIA
+// Prisma Database Schema & RBAC Architecture
+// =========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// =========================================================================
+// 1. PENGGUNA & RBAC (Role-Based Access Control) & AUDIT TRAIL
+// =========================================================================
+
+// Enum Role (Tingkatan RBAC):
+// - SUPER_ADMIN : Admin utama pengelola sistem, role pengguna, dan audit log.
+// - ADMIN       : Pengelola operasional mobilitas dan database kemitraan.
+// - DOSEN_STIP  : Pembimbing internal untuk validasi dan pengesahan dokumen.
+// - MITRA       : Pembimbing kampus tujuan di luar negeri untuk verifikasi laporan.
+// - KADET       : Mahasiswa pelaksana mobilitas internasional.
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  username      String?   @unique // Username resmi akun / Login ID
+  email         String    @unique
+  emailVerified DateTime?
+  password      String?   // Hashed password atau NRP (untuk kadet)
+  image         String?
+  role          String    @default("KADET") // SUPER_ADMIN, ADMIN, DOSEN_STIP, MITRA, KADET
+  isActive      Boolean   @default(true)    // Flag status aktif / suspended
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // NextAuth Session & Account Relasional
+  accounts Account[]
+  sessions Session[]
+
+  // Modul 1: Relasi Khusus Kadet
+  kadetProfile KadetProfile?
+
+  // Relasi Pembimbingan (Dosen STIP & Mitra ke Kadet)
+  bimbinganStip  KadetProfile[] @relation("DosenStipRelation")
+  bimbinganMitra KadetProfile[] @relation("MitraRelation")
+
+  // Modul 6 & 7: Riwayat E-Sign pada Laporan Akhir
+  mitraSignedReports FinalReport[] @relation("MitraSignerRelation")
+  stipSignedReports  FinalReport[] @relation("StipSignerRelation")
+
+  // Fitur Super Admin: Riwayat Login & Audit Trail
+  loginHistories LoginHistory[]
+}
+
+model LoginHistory {
+  id             String    @id @default(cuid())
+  userId         String?   // Nullable jika user gagal login karena tidak terdaftar
+  emailAttempted String    // NRP atau Email yang dicoba saat autentikasi
+  roleAttempted  String?   // Role yang terdeteksi atau dicoba
+  ipAddress      String?   // Alamat IP client (x-forwarded-for / request socket)
+  userAgent      String?   // Informasi Browser, OS, dan Client Agent
+  status         String    @default("SUCCESS") // SUCCESS atau FAILED
+  failReason     String?   // Alasan gagal: "Invalid Password", "User Not Found", "Account Suspended", dll
+  createdAt      DateTime  @default(now())
+
+  // Relasi ke User (SetNull jika user dihapus agar audit log tetap utuh)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([emailAttempted])
+  @@index([status])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// =========================================================================
+// 2. MASTER DATA (Modul 2 & 3: Negara & Mitra Universitas Luar Negeri)
+// =========================================================================
+
+model Country {
+  id           String       @id @default(cuid())
+  code         String       @unique // Kode ISO: "SE", "JP", "NL", "SG", "DE"
+  name         String       // Nama: "Swedia (Sweden)", "Jepang (Japan)"
+  universities University[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model University {
+  id            String         @id @default(cuid())
+  name          String         // Contoh: "World Maritime University"
+  address       String?
+  website       String?
+  countryId     String
+  country       Country        @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  kadetProfiles KadetProfile[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+// =========================================================================
+// 3. PROFIL KADET (Modul 1: Database Kadet Mobilitas)
+// =========================================================================
+
+model KadetProfile {
+  id           String  @id @default(cuid())
+  userId       String  @unique
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nrp          String  @unique // Nomor Registrasi Pokok Kadet STIP
+  kelas        String  // Nautika, Teknika, KALK beserta pleton/kelas
+  semester     Int     // Semester berjalan
+  pasporNo     String? // Nomor Paspor RI
+  fotoProfil   String? // URL Foto Profil Resmi Kadet
+
+  // Program Mobilitas & Universitas Tujuan (Modul 2 & 3)
+  universityId String?
+  university   University? @relation(fields: [universityId], references: [id], onDelete: SetNull)
+  programName  String?     // Contoh: "International Cadet Exchange Spring 2026"
+  startDate    DateTime?   // Tanggal mulai mobilitas
+  endDate      DateTime?   // Tanggal selesai mobilitas
+
+  // Dosen Pembimbing STIP & Pembimbing Mitra Luar Negeri
+  dosenStipId  String?
+  dosenStip    User?   @relation("DosenStipRelation", fields: [dosenStipId], references: [id], onDelete: SetNull)
+  mitraId      String?
+  mitra        User?   @relation("MitraRelation", fields: [mitraId], references: [id], onDelete: SetNull)
+
+  // Relasi Modul 4, 5, 6 & 7
+  immigrationDoc ImmigrationDoc?
+  dailyLogs      DailyLog[]
+  finalReport    FinalReport?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// =========================================================================
+// 4. DOKUMEN IMIGRASI (Modul 4: Pengelolaan Berkas Visa & Paspor)
+// =========================================================================
+
+model ImmigrationDoc {
+  id                String       @id @default(cuid())
+  kadetId           String       @unique
+  kadet             KadetProfile @relation(fields: [kadetId], references: [id], onDelete: Cascade)
+
+  // 1. Metadata Berkas Paspor RI
+  pasporNo          String?      // Nomor Paspor RI
+  ttl               String?      // Tempat, Tanggal Lahir (TTL)
+  pasporExpiry      DateTime?    // Masa Berlaku Paspor
+  pasporFileUrl     String?      // Berkas PDF/Gambar Paspor
+
+  // 2. Metadata Berkas Visa Studi / Izin Tinggal
+  visaNo            String?      // Nomor Visa Studi
+  visaType          String?      // Jenis Visa (e.g. Schengen Student Visa)
+  visaExpiry        DateTime?    // Masa Berlaku Visa
+  visaFileUrl       String?      // Berkas PDF/Gambar Visa
+
+  // 3. Metadata Berkas Asuransi Kesehatan
+  insuranceNo       String?      // Nomor Polis Asuransi Kesehatan
+  insuranceProvider String?      // Penyedia Asuransi (P&I Club, BPJS Pelaut, dll)
+  insuranceExpiry   DateTime?    // Masa Berlaku Asuransi
+  insuranceFileUrl  String?      // Berkas PDF/Gambar Asuransi
+
+  status            String       @default("PENDING") // PENDING, VERIFIED, REJECTED
+  notes             String?      // Catatan verifikator BPSDM / STIP
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+// =========================================================================
+// 5. MONITORING MOBILITAS (Modul 5: Jurnal Harian & Validasi Foto)
+// =========================================================================
+
+model DailyLog {
+  id             String       @id @default(cuid())
+  kadetId        String
+  kadet          KadetProfile @relation(fields: [kadetId], references: [id], onDelete: Cascade)
+  date           DateTime     // Tanggal Kegiatan
+  activityTitle  String?      // Ringkasan Judul Kegiatan
+  description    String       // Deskripsi Jurnal Lengkap
+  photoUrl       String       // Berkas Foto Kegiatan (< 1MB)
+  photoTimestamp DateTime     // Cap Waktu Otentikasi Foto
+  locationName   String?      // Lokasi (Kampus/Kapal/Laboratorium)
+  latitude       Float?       // Koordinat GPS
+  longitude      Float?       // Koordinat GPS
+  feedback       String?      // Review / Tanggapan Pembimbing
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([kadetId, date])
+}
+
+// =========================================================================
+// 6. EVALUASI & VALIDASI (Modul 6 & 7: E-Sign Laporan Akhir)
+// =========================================================================
+
+model FinalReport {
+  id              String       @id @default(cuid())
+  kadetId         String       @unique
+  kadet           KadetProfile @relation(fields: [kadetId], references: [id], onDelete: Cascade)
+  title           String       // Judul Laporan Akhir Mobilitas
+  summary         String       // Ringkasan Eksekutif
+  fileReportUrl   String?      // URL PDF Laporan Lengkap
+  status          String       @default("DRAFT") // DRAFT, SUBMITTED, APPROVED_BY_MITRA, APPROVED_BY_STIP, REJECTED
+
+  // Pengesahan 1: Pembimbing Mitra Kampus Luar Negeri
+  mitraSignCanvas String?      // Data Canvas E-Sign (Base64)
+  mitraSignedAt   DateTime?    // Waktu penandatanganan Mitra
+  mitraSignerId   String?
+  mitraSigner     User?        @relation("MitraSignerRelation", fields: [mitraSignerId], references: [id], onDelete: SetNull)
+  mitraNotes      String?      // Feedback / Evaluasi Mitra
+
+  // Pengesahan 2: Dosen STIP Indonesia (Validasi Akhir & Konversi Kredit)
+  stipSignCanvas  String?      // Data Canvas E-Sign (Base64)
+  stipSignedAt    DateTime?    // Waktu penandatanganan Dosen STIP
+  stipSignerId    String?
+  stipSigner      User?        @relation("StipSignerRelation", fields: [stipSignerId], references: [id], onDelete: SetNull)
+  stipNotes       String?      // Catatan konversi SKS / pengesahan STIP
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}

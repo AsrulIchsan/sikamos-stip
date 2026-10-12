@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --stip-navy: #0A2540;
+  --stip-gold: #D4AF37;
+  --stip-blue: #1E3A8A;
+}
+
+html {
+  zoom: 1.25;
+}
+
+body {
+  background-color: #F8FAFC;
+  color: #1E293B;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+/* Print Styling untuk Lembar Pengesahan Resmi */
+@media print {
+  html {
+    zoom: 1 !important;
+  }
+
+  header, footer, nav, .no-print, button {
+    display: none !important;
+  }
+
+  body {
+    background-color: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  #print-certificate-area {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 20mm !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    page-break-inside: avoid;
+  }
+}
+
+/* =========================================================================
+   Top Striped Loading Progress Bar
+   ========================================================================= */
+@keyframes striped-loading-move {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 36px 0;
+  }
+}
+
+.striped-progress-bar {
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.4) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.4) 50%,
+    rgba(255, 255, 255, 0.4) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 24px 24px;
+  animation: striped-loading-move 0.75s linear infinite;
+}
+
