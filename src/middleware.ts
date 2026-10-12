@@ -48,6 +48,7 @@ export default withAuth(
     return NextResponse.next();
   },
   {
+    secret: process.env.NEXTAUTH_SECRET || "sikamos_stip_super_secret_jwt_key_2026",
     callbacks: {
       authorized: ({ token }) => {
         // ZERO ROUTE LEAKAGE: Tanpa token autentikasi valid, langsung tolak dan lempar ke /login
