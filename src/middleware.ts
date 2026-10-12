@@ -1,67 +1,83 @@
-import { withAuth } from "next-auth/middleware";
-import { NextResponse } from "next/server";
+import { getToken } from "next-auth/jwt";
+import { NextRequest, NextResponse } from "next/server";
 
 // =========================================================================
-// SIKAMOS - Strict Security & Route Protection (Anti-Bocor RBAC)
+// SIKAMOS - Strict Security & Route Protection (Zero Route Leakage RBAC)
 // =========================================================================
 
-export default withAuth(
-  function middleware(req) {
-    const pathname = req.nextUrl.pathname;
-    const token = req.nextauth.token;
+const JWT_SECRET = process.env.NEXTAUTH_SECRET || "sikamos_stip_super_secret_jwt_key_2026";
 
-    // 1. Validasi Status Suspended
-    if (token && token.isActive === false) {
-      const loginUrl = new URL("/login", req.url);
-      loginUrl.searchParams.set("error", "suspended");
-      return NextResponse.redirect(loginUrl);
-    }
+export async function middleware(req: NextRequest) {
+  const pathname = req.nextUrl.pathname;
 
-    const role = (token?.role as string) || "KADET";
+  // 1. Ekstrak session token dengan prioritas secure cookie (Vercel Production HTTPS),
+  // lalu unsecure cookie (Local Development HTTP)
+  let token = await getToken({
+    req,
+    secret: JWT_SECRET,
+    cookieName: "__Secure-next-auth.session-token",
+  });
 
-    // 2. Akses Rute Eksklusif SUPER_ADMIN:
-    // /admin/roles, /admin/users, /admin/logs, /admin/login-history
-    const isSuperAdminOnly =
-      pathname.startsWith("/admin/users") ||
-      pathname.startsWith("/admin/roles") ||
-      pathname.startsWith("/admin/logs") ||
-      pathname.startsWith("/admin/login-history");
-
-    if (isSuperAdminOnly) {
-      if (role !== "SUPER_ADMIN") {
-        // Alihkan ke halaman 403 Forbidden
-        return NextResponse.redirect(new URL("/403", req.url));
-      }
-      return NextResponse.next();
-    }
-
-    // 3. Akses Rute Admin Operasional (/admin/*):
-    // Hanya untuk SUPER_ADMIN dan ADMIN
-    if (pathname.startsWith("/admin")) {
-      if (role !== "SUPER_ADMIN" && role !== "ADMIN") {
-        return NextResponse.redirect(new URL("/403", req.url));
-      }
-      return NextResponse.next();
-    }
-
-    // 4. Akses Dashboard & Modul Operasional Lainnya
-    return NextResponse.next();
-  },
-  {
-    secret: process.env.NEXTAUTH_SECRET || "sikamos_stip_super_secret_jwt_key_2026",
-    callbacks: {
-      authorized: ({ token }) => {
-        // ZERO ROUTE LEAKAGE: Tanpa token autentikasi valid, langsung tolak dan lempar ke /login
-        return !!token;
-      },
-    },
-    pages: {
-      signIn: "/login",
-    },
+  if (!token) {
+    token = await getToken({
+      req,
+      secret: JWT_SECRET,
+      cookieName: "next-auth.session-token",
+    });
   }
-);
 
-// Matcher: Proteksi ketat rute Dashboard, Admin, dan seluruh Modul Fungsional SIKAMOS
+  if (!token) {
+    token = await getToken({
+      req,
+      secret: JWT_SECRET,
+    });
+  }
+
+  // 2. Jika tidak ada token valid, alihkan ke halaman login
+  if (!token) {
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("callbackUrl", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // 3. Validasi status akun (Suspended / Non-aktif)
+  if (token.isActive === false) {
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("error", "suspended");
+    return NextResponse.redirect(loginUrl);
+  }
+
+  const role = (token.role as string) || "KADET";
+
+  // 4. Akses Rute Eksklusif SUPER_ADMIN:
+  // /admin/users, /admin/roles, /admin/logs, /admin/login-history
+  const isSuperAdminOnly =
+    pathname.startsWith("/admin/users") ||
+    pathname.startsWith("/admin/roles") ||
+    pathname.startsWith("/admin/logs") ||
+    pathname.startsWith("/admin/login-history");
+
+  if (isSuperAdminOnly) {
+    if (role !== "SUPER_ADMIN") {
+      return NextResponse.redirect(new URL("/403", req.url));
+    }
+    return NextResponse.next();
+  }
+
+  // 5. Akses Rute Admin Operasional (/admin/*):
+  // Hanya untuk SUPER_ADMIN dan ADMIN
+  if (pathname.startsWith("/admin")) {
+    if (role !== "SUPER_ADMIN" && role !== "ADMIN") {
+      return NextResponse.redirect(new URL("/403", req.url));
+    }
+    return NextResponse.next();
+  }
+
+  // 6. Rute lainnya diizinkan untuk sesi aktif
+  return NextResponse.next();
+}
+
+// Proteksi ketat rute Dashboard, Admin, dan seluruh Modul Fungsional SIKAMOS
 export const config = {
   matcher: [
     "/",
