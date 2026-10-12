@@ -19,6 +19,7 @@
     "seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@neon/config": "^1.8.6",
     "@prisma/client": "^5.21.1",
     "browser-image-compression": "^2.0.2",
     "clsx": "^2.1.1",
